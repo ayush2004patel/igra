@@ -1,0 +1,25 @@
+# Virtual environments
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+
+# Test / lint caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# IGRA runtime data - never commit captured database snapshots
+.igra/
+
+# OS
+.DS_Store
+
+# Build artifacts
+build/
+dist/
