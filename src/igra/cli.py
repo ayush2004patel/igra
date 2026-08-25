@@ -24,8 +24,9 @@ from igra.config import (
     resolve_db_password,
     save_config,
 )
+from igra.metadata import load_metadata
 from igra.restore import restore_snapshot
-from igra.storage import SnapshotNotFoundError
+from igra.storage import SnapshotNotFoundError, list_snapshot_names, metadata_path
 
 app = typer.Typer(
     name="igra",
@@ -224,5 +225,33 @@ def snapshot_restore(
     )
     raise typer.Exit(code=1)
     
+@snapshot_app.command("list")
+def snapshot_list() -> None:
+    """List all stored snapshots."""
+    try:
+        load_config()
+    except ConfigError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(code=3) from exc
+
+    names = list_snapshot_names()
+
+    if not names:
+        typer.echo("No snapshots found.")
+        raise typer.Exit(code=0)
+
+    typer.echo(f"{'NAME':<30} {'CREATED':<26} {'SIZE (bytes)':<12}")
+    for name in names:
+        try:
+            meta = load_metadata(metadata_path(name))
+            typer.echo(
+                f"{meta.name:<30} {meta.created_at!s:<26} {meta.dump_size_bytes:<12}"
+            )
+        except (OSError, ValueError):
+            # OSError: metadata.json missing/unreadable. ValueError: JSON
+            # parse or pydantic validation failure. Either way, don't let
+            # one broken snapshot's metadata crash the whole list command.
+            typer.echo(f"{name:<30} (metadata unreadable)")
+
 if __name__ == "__main__":
     app()
