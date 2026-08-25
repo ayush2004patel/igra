@@ -1,0 +1,228 @@
+"""IGRA CLI entrypoint.
+
+Week 1 scaffold: --help, --version, and `igra init` are functional.
+Remaining subcommands (status, snapshot) are added in later steps.
+"""
+
+from __future__ import annotations
+
+import typer
+
+from igra import __version__
+from igra.adapter.postgres import (
+    ConnectionError_,
+    connect,
+    get_server_version,
+)
+from igra.capture import CaptureError, create_snapshot
+from igra.config import (
+    ConfigError,
+    DatabaseConfig,
+    IgraConfig,
+    config_exists,
+    load_config,
+    resolve_db_password,
+    save_config,
+)
+from igra.restore import restore_snapshot
+from igra.storage import SnapshotNotFoundError
+
+app = typer.Typer(
+    name="igra",
+    help="Isolated Generation & Recovery Architecture - "
+    "local-first PostgreSQL database state management for developers.",
+    no_args_is_help=True,
+)
+
+snapshot_app = typer.Typer(
+    name="snapshot",
+    help="Manage database state snapshots.",
+)
+app.add_typer(snapshot_app, name="snapshot")
+
+def _version_callback(value: bool) -> None:
+    if value:
+        typer.echo(f"igra {__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def main(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        help="Show the IGRA version and exit.",
+        callback=_version_callback,
+        is_eager=True,
+    ),
+) -> None:
+    """IGRA - local-first PostgreSQL database state management."""
+
+
+@app.command()
+def init(
+    host: str = typer.Option(None, "--host", help="PostgreSQL host."),
+    port: int = typer.Option(None, "--port", help="PostgreSQL port."),
+    dbname: str = typer.Option(None, "--dbname", help="Database name."),
+    user: str = typer.Option(None, "--user", help="Database user."),
+) -> None:
+    """Initialize IGRA in the current project (creates .igra/config.toml)."""
+    if config_exists():
+        typer.secho(
+            "IGRA is already initialized in this project (.igra/config.toml exists).",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(code=2)
+
+    if host is None:
+        host = typer.prompt("PostgreSQL host", default="localhost")
+    if port is None:
+        port = typer.prompt("PostgreSQL port", default=5432, type=int)
+    if dbname is None:
+        dbname = typer.prompt("Database name")
+    if user is None:
+        user = typer.prompt("Database user")
+
+    config = IgraConfig(
+        database=DatabaseConfig(host=host, port=port, dbname=dbname, user=user)
+    )
+
+    try:
+        path = save_config(config)
+    except ConfigError as exc:
+        typer.secho(f"Failed to initialize IGRA: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(code=3) from exc
+
+    typer.secho(f"IGRA initialized. Configuration written to {path}", fg=typer.colors.GREEN)
+    typer.echo("Note: database password is not stored. Set IGRA_DB_PASSWORD "
+               "or you will be prompted when needed.")
+
+def _count_snapshots() -> int:
+    from pathlib import Path
+
+    snapshots_dir = Path.cwd() / ".igra" / "snapshots"
+    if not snapshots_dir.is_dir():
+        return 0
+    return len([p for p in snapshots_dir.iterdir() if p.is_dir()])
+
+
+@app.command()
+def status() -> None:
+    """Show IGRA connectivity and basic database info."""
+    try:
+        config = load_config()
+    except ConfigError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(code=3) from exc
+
+    try:
+        password = resolve_db_password()
+    except Exception as exc:
+        typer.secho(f"Could not resolve database password: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(code=3) from exc
+
+    try:
+        with connect(config.database, password) as conn:
+            version = get_server_version(conn)
+    except ConnectionError_ as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(code=3) from exc
+
+    snapshot_count = _count_snapshots()
+
+    typer.secho("connected: true", fg=typer.colors.GREEN)
+    typer.echo(f"database_name: {config.database.dbname}")
+    typer.echo(f"postgres_server_version: {version}")
+    typer.echo(f"snapshot_count: {snapshot_count}")
+
+@snapshot_app.command("create")
+def snapshot_create(
+    name: str = typer.Argument(..., help="Name for the new snapshot."),
+) -> None:
+    """Capture the current database state as a named snapshot."""
+    try:
+        config = load_config()
+    except ConfigError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(code=3) from exc
+
+    try:
+        password = resolve_db_password()
+    except Exception as exc:
+        typer.secho(f"Could not resolve database password: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(code=3) from exc
+
+    try:
+        with connect(config.database, password) as conn:
+            metadata = create_snapshot(name, config.database, password, conn)
+    except ConnectionError_ as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(code=3) from exc
+    except CaptureError as exc:
+        typer.secho(f"Snapshot creation failed: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(code=2) from exc
+
+    typer.secho(f"Snapshot '{name}' created.", fg=typer.colors.GREEN)
+    typer.echo(f"id: {metadata.id}")
+    typer.echo(f"created_at: {metadata.created_at}")
+    typer.echo(f"dump_size_bytes: {metadata.dump_size_bytes}")
+    typer.echo(f"tables: {len(metadata.tables)}")
+    
+@snapshot_app.command("restore")
+def snapshot_restore(
+    name: str = typer.Argument(..., help="Name of the snapshot to restore."),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Skip the confirmation prompt."
+    ),
+) -> None:
+    """Restore the database to the state captured in a snapshot.
+
+    This is a destructive operation on the current database state.
+    Per ARCHITECTURE.md, this is a staged, validated restore - NOT
+    atomic. See the printed result for exactly which stage completed.
+    """
+    try:
+        config = load_config()
+    except ConfigError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(code=3) from exc
+
+    if not yes:
+        confirmed = typer.confirm(
+            f"This will replace the current contents of database "
+            f"'{config.database.dbname}' with snapshot '{name}'. Continue?"
+        )
+        if not confirmed:
+            typer.echo("Restore cancelled.")
+            raise typer.Exit(code=0)
+
+    try:
+        password = resolve_db_password()
+    except Exception as exc:
+        typer.secho(f"Could not resolve database password: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(code=3) from exc
+
+    try:
+        result = restore_snapshot(name, config.database, password)
+    except SnapshotNotFoundError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(code=3) from exc
+
+    typer.echo(f"checksum_verified: {result.checksum_verified}")
+    typer.echo(f"scratch_restore_succeeded: {result.scratch_restore_succeeded}")
+    typer.echo(f"validation_passed: {result.validation_passed}")
+    typer.echo(f"replacement_completed: {result.replacement_completed}")
+    typer.echo(f"target_database_state: {result.target_database_state}")
+
+    if result.replacement_completed:
+        typer.secho(f"Snapshot '{name}' restored successfully.", fg=typer.colors.GREEN)
+        raise typer.Exit(code=0)
+
+    typer.secho(
+        f"Restore did not complete. Failed at stage: {result.failure_stage}",
+        fg=typer.colors.RED,
+    )
+    raise typer.Exit(code=1)
+    
+if __name__ == "__main__":
+    app()
