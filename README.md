@@ -1,5 +1,7 @@
 # IGRA
 
+[![CI](https://github.com/ayush2004patel/igra/actions/workflows/ci.yml/badge.svg)](https://github.com/ayush2004patel/igra/actions/workflows/ci.yml)
+
 **Isolated Generation & Recovery Architecture**
 
 A local-first, developer-focused database state management tool for PostgreSQL.
