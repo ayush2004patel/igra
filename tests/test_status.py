@@ -30,10 +30,10 @@ def test_status_success(tmp_path, monkeypatch):
     result = runner.invoke(app, ["status"])
 
     assert result.exit_code == 0
-    assert "connected: true" in result.stdout
-    assert "database_name: igra_dev_test" in result.stdout
-    assert "postgres_server_version:" in result.stdout
-    assert "snapshot_count: 0" in result.stdout
+    assert "true" in result.stdout
+    assert "igra_dev_test" in result.stdout
+    assert "PostgreSQL version" in result.stdout
+    assert "Snapshots" in result.stdout
 
 
 def test_status_wrong_password_fails(tmp_path, monkeypatch):

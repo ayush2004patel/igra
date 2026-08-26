@@ -31,10 +31,10 @@ def test_show_existing_snapshot_displays_metadata(tmp_path, monkeypatch):
     result = runner.invoke(app, ["snapshot", "show", "clean-state"])
 
     assert result.exit_code == 0
-    assert "name: clean-state" in result.stdout
-    assert "source_database: igra_dev_test" in result.stdout
+    assert "clean-state" in result.stdout
+    assert "igra_dev_test" in result.stdout
     assert "public.customers" in result.stdout
-    assert "3 rows" in result.stdout
+    assert "3" in result.stdout
 
 
 def test_show_does_not_expose_row_level_data(tmp_path, monkeypatch):

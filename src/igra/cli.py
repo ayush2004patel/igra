@@ -7,6 +7,8 @@ Remaining subcommands (status, snapshot) are added in later steps.
 from __future__ import annotations
 
 import typer
+from rich.console import Console
+from rich.table import Table
 
 from igra import __version__
 from igra.adapter.postgres import (
@@ -40,6 +42,8 @@ from igra.storage import (
     metadata_path,
     snapshot_exists,
 )
+
+console = Console()
 
 app = typer.Typer(
     name="igra",
@@ -126,28 +130,32 @@ def status() -> None:
     try:
         config = load_config()
     except ConfigError as exc:
-        typer.secho(str(exc), fg=typer.colors.RED)
+        console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=3) from exc
 
     try:
         password = resolve_db_password()
     except Exception as exc:
-        typer.secho(f"Could not resolve database password: {exc}", fg=typer.colors.RED)
+        console.print(f"[red]Could not resolve database password: {exc}[/red]")
         raise typer.Exit(code=3) from exc
 
     try:
         with connect(config.database, password) as conn:
             version = get_server_version(conn)
     except ConnectionError_ as exc:
-        typer.secho(str(exc), fg=typer.colors.RED)
+        console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=3) from exc
 
     snapshot_count = _count_snapshots()
 
-    typer.secho("connected: true", fg=typer.colors.GREEN)
-    typer.echo(f"database_name: {config.database.dbname}")
-    typer.echo(f"postgres_server_version: {version}")
-    typer.echo(f"snapshot_count: {snapshot_count}")
+    table = Table(show_header=False, box=None)
+    table.add_column(style="bold")
+    table.add_column()
+    table.add_row("Connected", "[green]true[/green]")
+    table.add_row("Database", config.database.dbname)
+    table.add_row("PostgreSQL version", version)
+    table.add_row("Snapshots", str(snapshot_count))
+    console.print(table)
 
 @snapshot_app.command("create")
 def snapshot_create(
@@ -176,11 +184,15 @@ def snapshot_create(
         typer.secho(f"Snapshot creation failed: {exc}", fg=typer.colors.RED)
         raise typer.Exit(code=2) from exc
 
-    typer.secho(f"Snapshot '{name}' created.", fg=typer.colors.GREEN)
-    typer.echo(f"id: {metadata.id}")
-    typer.echo(f"created_at: {metadata.created_at}")
-    typer.echo(f"dump_size_bytes: {metadata.dump_size_bytes}")
-    typer.echo(f"tables: {len(metadata.tables)}")
+    console.print(f"[green]Snapshot '{name}' created.[/green]")
+    table = Table(show_header=False, box=None)
+    table.add_column(style="bold")
+    table.add_column()
+    table.add_row("ID", metadata.id)
+    table.add_row("Created", str(metadata.created_at))
+    table.add_row("Size", f"{metadata.dump_size_bytes} bytes")
+    table.add_row("Tables", str(len(metadata.tables)))
+    console.print(table)
     
 @snapshot_app.command("restore")
 def snapshot_restore(
@@ -222,19 +234,25 @@ def snapshot_restore(
         typer.secho(str(exc), fg=typer.colors.RED)
         raise typer.Exit(code=3) from exc
 
-    typer.echo(f"checksum_verified: {result.checksum_verified}")
-    typer.echo(f"scratch_restore_succeeded: {result.scratch_restore_succeeded}")
-    typer.echo(f"validation_passed: {result.validation_passed}")
-    typer.echo(f"replacement_completed: {result.replacement_completed}")
-    typer.echo(f"target_database_state: {result.target_database_state}")
+    def _mark(value: bool) -> str:
+        return "[green]yes[/green]" if value else "[red]no[/red]"
+
+    table = Table(show_header=False, box=None)
+    table.add_column(style="bold")
+    table.add_column()
+    table.add_row("Checksum verified", _mark(result.checksum_verified))
+    table.add_row("Scratch restore succeeded", _mark(result.scratch_restore_succeeded))
+    table.add_row("Validation passed", _mark(result.validation_passed))
+    table.add_row("Replacement completed", _mark(result.replacement_completed))
+    table.add_row("Target database state", result.target_database_state)
+    console.print(table)
 
     if result.replacement_completed:
-        typer.secho(f"Snapshot '{name}' restored successfully.", fg=typer.colors.GREEN)
+        console.print(f"[green]Snapshot '{name}' restored successfully.[/green]")
         raise typer.Exit(code=0)
 
-    typer.secho(
-        f"Restore did not complete. Failed at stage: {result.failure_stage}",
-        fg=typer.colors.RED,
+    console.print(
+        f"[red]Restore did not complete. Failed at stage: {result.failure_stage}[/red]"
     )
     raise typer.Exit(code=1)
     
@@ -244,27 +262,31 @@ def snapshot_list() -> None:
     try:
         load_config()
     except ConfigError as exc:
-        typer.secho(str(exc), fg=typer.colors.RED)
+        console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=3) from exc
 
     names = list_snapshot_names()
 
     if not names:
-        typer.echo("No snapshots found.")
+        console.print("No snapshots found.")
         raise typer.Exit(code=0)
 
-    typer.echo(f"{'NAME':<30} {'CREATED':<26} {'SIZE (bytes)':<12}")
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("Name")
+    table.add_column("Created")
+    table.add_column("Size (bytes)", justify="right")
+
     for name in names:
         try:
             meta = load_metadata(metadata_path(name))
-            typer.echo(
-                f"{meta.name:<30} {meta.created_at!s:<26} {meta.dump_size_bytes:<12}"
-            )
+            table.add_row(meta.name, str(meta.created_at), str(meta.dump_size_bytes))
         except (OSError, ValueError):
             # OSError: metadata.json missing/unreadable. ValueError: JSON
             # parse or pydantic validation failure. Either way, don't let
             # one broken snapshot's metadata crash the whole list command.
-            typer.echo(f"{name:<30} (metadata unreadable)")
+            table.add_row(name, "[dim](metadata unreadable)[/dim]", "-")
+
+    console.print(table)
 
 @snapshot_app.command("show")
 def snapshot_show(
@@ -287,18 +309,24 @@ def snapshot_show(
         typer.secho(f"Could not read metadata for '{name}': {exc}", fg=typer.colors.RED)
         raise typer.Exit(code=3) from exc
 
-    typer.echo(f"name: {meta.name}")
-    typer.echo(f"id: {meta.id}")
-    typer.echo(f"created_at: {meta.created_at}")
-    typer.echo(f"source_database: {meta.source_database}")
-    typer.echo(f"postgres_server_version: {meta.postgres_server_version}")
-    typer.echo(f"pg_dump_version: {meta.pg_dump_version}")
-    typer.echo(f"dump_size_bytes: {meta.dump_size_bytes}")
-    typer.echo("tables:")
+    info_table = Table(show_header=False, box=None)
+    info_table.add_column(style="bold")
+    info_table.add_column()
+    info_table.add_row("Name", meta.name)
+    info_table.add_row("ID", meta.id)
+    info_table.add_row("Created", str(meta.created_at))
+    info_table.add_row("Source database", meta.source_database)
+    info_table.add_row("PostgreSQL version", meta.postgres_server_version)
+    info_table.add_row("pg_dump version", meta.pg_dump_version)
+    info_table.add_row("Dump size", f"{meta.dump_size_bytes} bytes")
+    console.print(info_table)
+
+    tables_table = Table(show_header=True, header_style="bold cyan", title="Tables")
+    tables_table.add_column("Table")
+    tables_table.add_column("Rows", justify="right")
     for table in meta.tables:
-        typer.echo(
-            f"  {table.schema_name}.{table.table_name}  ({table.row_count} rows)"
-        )
+        tables_table.add_row(f"{table.schema_name}.{table.table_name}", str(table.row_count))
+    console.print(tables_table)
 
 @snapshot_app.command("diff")
 def snapshot_diff(
@@ -330,35 +358,41 @@ def snapshot_diff(
     meta_b = load_metadata(metadata_path(snapshot_b))
     row_diffs = compute_row_count_diff(meta_a, meta_b)
 
-    typer.echo(f"Comparing '{snapshot_a}' -> '{snapshot_b}'")
-    typer.echo("")
-
-    if schema_result.added_objects:
-        typer.secho("Added:", fg=typer.colors.GREEN)
-        for obj in schema_result.added_objects:
-            typer.echo(f"  + {obj.object_type} {obj.schema_name}.{obj.object_name}")
-
-    if schema_result.removed_objects:
-        typer.secho("Removed:", fg=typer.colors.RED)
-        for obj in schema_result.removed_objects:
-            typer.echo(f"  - {obj.object_type} {obj.schema_name}.{obj.object_name}")
+    console.print(f"Comparing [bold]'{snapshot_a}'[/bold] -> [bold]'{snapshot_b}'[/bold]\n")
 
     changed_row_counts = [d for d in row_diffs if d.delta != 0]
+    has_differences = (
+        schema_result.added_objects or schema_result.removed_objects or changed_row_counts
+    )
+
+    if schema_result.added_objects:
+        console.print("[bold green]Added:[/bold green]")
+        for obj in schema_result.added_objects:
+            console.print(f"  [green]+ {obj.object_type} {obj.schema_name}.{obj.object_name}[/green]")
+
+    if schema_result.removed_objects:
+        console.print("[bold red]Removed:[/bold red]")
+        for obj in schema_result.removed_objects:
+            console.print(f"  [red]- {obj.object_type} {obj.schema_name}.{obj.object_name}[/red]")
+
     if changed_row_counts:
-        typer.secho("Row count changes:", fg=typer.colors.YELLOW)
+        table = Table(show_header=True, header_style="bold yellow", title="Row count changes")
+        table.add_column("Table")
+        table.add_column("Before", justify="right")
+        table.add_column("After", justify="right")
+        table.add_column("Delta", justify="right")
         for d in changed_row_counts:
             sign = "+" if d.delta > 0 else ""
-            typer.echo(
-                f"  {d.table.schema_name}.{d.table.object_name}: "
-                f"{d.row_count_a} -> {d.row_count_b} ({sign}{d.delta})"
+            table.add_row(
+                f"{d.table.schema_name}.{d.table.object_name}",
+                str(d.row_count_a),
+                str(d.row_count_b),
+                f"{sign}{d.delta}",
             )
+        console.print(table)
 
-    if (
-        not schema_result.added_objects
-        and not schema_result.removed_objects
-        and not changed_row_counts
-    ):
-        typer.echo("No differences found.")
+    if not has_differences:
+        console.print("No differences found.")
 
 @snapshot_app.command("delete")
 def snapshot_delete(
@@ -375,22 +409,22 @@ def snapshot_delete(
         raise typer.Exit(code=3) from exc
 
     if not snapshot_exists(name):
-        typer.secho(f"No snapshot named '{name}' exists.", fg=typer.colors.RED)
+        console.print(f"[red]No snapshot named '{name}' exists.[/red]")
         raise typer.Exit(code=3)
 
     if not yes:
         confirmed = typer.confirm(f"Delete snapshot '{name}'? This cannot be undone.")
         if not confirmed:
-            typer.echo("Delete cancelled.")
+            console.print("Delete cancelled.")
             raise typer.Exit(code=0)
 
     try:
         delete_snapshot_directory(name)
     except SnapshotNotFoundError as exc:
-        typer.secho(str(exc), fg=typer.colors.RED)
+        console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=3) from exc
 
-    typer.secho(f"Snapshot '{name}' deleted.", fg=typer.colors.GREEN)
+    console.print(f"[green]Snapshot '{name}' deleted.[/green]")
     
 if __name__ == "__main__":
     app()

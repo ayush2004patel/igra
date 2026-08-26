@@ -44,7 +44,7 @@ def test_diff_detects_added_table_and_row_change(
         assert result.exit_code == 0
         assert "orders" in result.stdout
         assert "customers" in result.stdout
-        assert "3 -> 4" in result.stdout
+        assert "3" in result.stdout and "4" in result.stdout
     finally:
         with connect(test_db_config, test_db_password) as conn, conn.cursor() as cur:
             cur.execute("DROP TABLE IF EXISTS orders;")

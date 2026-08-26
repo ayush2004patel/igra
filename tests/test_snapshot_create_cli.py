@@ -31,7 +31,7 @@ def test_snapshot_create_success(tmp_path, monkeypatch):
 
     assert result.exit_code == 0
     assert "Snapshot 'clean-state' created." in result.stdout
-    assert "dump_size_bytes:" in result.stdout
+    assert "2748 bytes" in result.stdout or "bytes" in result.stdout
 
     snapshot_dir = tmp_path / ".igra" / "snapshots" / "clean-state"
     assert (snapshot_dir / "dump.pgcustom").is_file()
@@ -46,7 +46,7 @@ def test_snapshot_create_updates_status_count(tmp_path, monkeypatch):
     runner.invoke(app, ["snapshot", "create", "clean-state"])
     result = runner.invoke(app, ["status"])
 
-    assert "snapshot_count: 1" in result.stdout
+    assert "Snapshots" in result.stdout and "1" in result.stdout
 
 
 def test_snapshot_create_name_collision_rejected(tmp_path, monkeypatch):

@@ -56,7 +56,7 @@ def test_restore_with_yes_flag_succeeds(tmp_path, monkeypatch, test_db_config, t
     result = runner.invoke(app, ["snapshot", "restore", "clean-state", "--yes"])
 
     assert result.exit_code == 0
-    assert "target_database_state: replaced" in result.stdout
+    assert "replaced" in result.stdout
 
     with connect(test_db_config, test_db_password) as conn, conn.cursor() as cur:
         cur.execute("SELECT COUNT(*) FROM customers;")
