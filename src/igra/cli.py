@@ -34,6 +34,7 @@ from igra.metadata import load_metadata
 from igra.restore import restore_snapshot
 from igra.storage import (
     SnapshotNotFoundError,
+    delete_snapshot_directory,
     dump_path,
     list_snapshot_names,
     metadata_path,
@@ -358,6 +359,38 @@ def snapshot_diff(
         and not changed_row_counts
     ):
         typer.echo("No differences found.")
-        
+
+@snapshot_app.command("delete")
+def snapshot_delete(
+    name: str = typer.Argument(..., help="Name of the snapshot to delete."),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Skip the confirmation prompt."
+    ),
+) -> None:
+    """Delete a stored snapshot. Does not modify the active database."""
+    try:
+        load_config()
+    except ConfigError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(code=3) from exc
+
+    if not snapshot_exists(name):
+        typer.secho(f"No snapshot named '{name}' exists.", fg=typer.colors.RED)
+        raise typer.Exit(code=3)
+
+    if not yes:
+        confirmed = typer.confirm(f"Delete snapshot '{name}'? This cannot be undone.")
+        if not confirmed:
+            typer.echo("Delete cancelled.")
+            raise typer.Exit(code=0)
+
+    try:
+        delete_snapshot_directory(name)
+    except SnapshotNotFoundError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(code=3) from exc
+
+    typer.secho(f"Snapshot '{name}' deleted.", fg=typer.colors.GREEN)
+    
 if __name__ == "__main__":
     app()
