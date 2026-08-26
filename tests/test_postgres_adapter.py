@@ -256,7 +256,8 @@ def test_rename_database_success(test_db_config, test_db_password):
 
 
 def test_rename_database_fails_with_active_connection(test_db_config, test_db_password):
-    db_name = "igra_test_rename_blocked_xyz"
+    import uuid
+    db_name = f"igra_test_rename_blocked_{uuid.uuid4().hex[:8]}"
     create_database(test_db_config, test_db_password, db_name)
     proc = None
     try:

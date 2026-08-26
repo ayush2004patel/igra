@@ -24,9 +24,21 @@ from igra.config import (
     resolve_db_password,
     save_config,
 )
+from igra.diff import (
+    DiffError,
+    compute_row_count_diff,
+    compute_schema_diff,
+    get_toc_entries,
+)
 from igra.metadata import load_metadata
 from igra.restore import restore_snapshot
-from igra.storage import SnapshotNotFoundError, list_snapshot_names, metadata_path, snapshot_exists
+from igra.storage import (
+    SnapshotNotFoundError,
+    dump_path,
+    list_snapshot_names,
+    metadata_path,
+    snapshot_exists,
+)
 
 app = typer.Typer(
     name="igra",
@@ -287,5 +299,65 @@ def snapshot_show(
             f"  {table.schema_name}.{table.table_name}  ({table.row_count} rows)"
         )
 
+@snapshot_app.command("diff")
+def snapshot_diff(
+    snapshot_a: str = typer.Argument(..., help="First snapshot name."),
+    snapshot_b: str = typer.Argument(..., help="Second snapshot name."),
+) -> None:
+    """Compare two snapshots: schema differences and row count changes."""
+    try:
+        load_config()
+    except ConfigError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(code=3) from exc
+
+    for name in (snapshot_a, snapshot_b):
+        if not snapshot_exists(name):
+            typer.secho(f"No snapshot named '{name}' exists.", fg=typer.colors.RED)
+            raise typer.Exit(code=3)
+
+    try:
+        entries_a = get_toc_entries(dump_path(snapshot_a))
+        entries_b = get_toc_entries(dump_path(snapshot_b))
+    except DiffError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(code=3) from exc
+
+    schema_result = compute_schema_diff(entries_a, entries_b)
+
+    meta_a = load_metadata(metadata_path(snapshot_a))
+    meta_b = load_metadata(metadata_path(snapshot_b))
+    row_diffs = compute_row_count_diff(meta_a, meta_b)
+
+    typer.echo(f"Comparing '{snapshot_a}' -> '{snapshot_b}'")
+    typer.echo("")
+
+    if schema_result.added_objects:
+        typer.secho("Added:", fg=typer.colors.GREEN)
+        for obj in schema_result.added_objects:
+            typer.echo(f"  + {obj.object_type} {obj.schema_name}.{obj.object_name}")
+
+    if schema_result.removed_objects:
+        typer.secho("Removed:", fg=typer.colors.RED)
+        for obj in schema_result.removed_objects:
+            typer.echo(f"  - {obj.object_type} {obj.schema_name}.{obj.object_name}")
+
+    changed_row_counts = [d for d in row_diffs if d.delta != 0]
+    if changed_row_counts:
+        typer.secho("Row count changes:", fg=typer.colors.YELLOW)
+        for d in changed_row_counts:
+            sign = "+" if d.delta > 0 else ""
+            typer.echo(
+                f"  {d.table.schema_name}.{d.table.object_name}: "
+                f"{d.row_count_a} -> {d.row_count_b} ({sign}{d.delta})"
+            )
+
+    if (
+        not schema_result.added_objects
+        and not schema_result.removed_objects
+        and not changed_row_counts
+    ):
+        typer.echo("No differences found.")
+        
 if __name__ == "__main__":
     app()
