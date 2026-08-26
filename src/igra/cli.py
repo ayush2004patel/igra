@@ -26,7 +26,7 @@ from igra.config import (
 )
 from igra.metadata import load_metadata
 from igra.restore import restore_snapshot
-from igra.storage import SnapshotNotFoundError, list_snapshot_names, metadata_path
+from igra.storage import SnapshotNotFoundError, list_snapshot_names, metadata_path, snapshot_exists
 
 app = typer.Typer(
     name="igra",
@@ -252,6 +252,40 @@ def snapshot_list() -> None:
             # parse or pydantic validation failure. Either way, don't let
             # one broken snapshot's metadata crash the whole list command.
             typer.echo(f"{name:<30} (metadata unreadable)")
+
+@snapshot_app.command("show")
+def snapshot_show(
+    name: str = typer.Argument(..., help="Name of the snapshot to inspect."),
+) -> None:
+    """Show detailed metadata for a single snapshot."""
+    try:
+        load_config()
+    except ConfigError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(code=3) from exc
+
+    if not snapshot_exists(name):
+        typer.secho(f"No snapshot named '{name}' exists.", fg=typer.colors.RED)
+        raise typer.Exit(code=3)
+
+    try:
+        meta = load_metadata(metadata_path(name))
+    except (OSError, ValueError) as exc:
+        typer.secho(f"Could not read metadata for '{name}': {exc}", fg=typer.colors.RED)
+        raise typer.Exit(code=3) from exc
+
+    typer.echo(f"name: {meta.name}")
+    typer.echo(f"id: {meta.id}")
+    typer.echo(f"created_at: {meta.created_at}")
+    typer.echo(f"source_database: {meta.source_database}")
+    typer.echo(f"postgres_server_version: {meta.postgres_server_version}")
+    typer.echo(f"pg_dump_version: {meta.pg_dump_version}")
+    typer.echo(f"dump_size_bytes: {meta.dump_size_bytes}")
+    typer.echo("tables:")
+    for table in meta.tables:
+        typer.echo(
+            f"  {table.schema_name}.{table.table_name}  ({table.row_count} rows)"
+        )
 
 if __name__ == "__main__":
     app()
