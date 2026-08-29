@@ -20,7 +20,26 @@ Requires Python 3.12+ and PostgreSQL client tools (`pg_dump`, `pg_restore`) on y
 pip install igra
 ```
 
-*(Not yet published to PyPI — see [Development install](#development-install) below.)*
+*(Not yet published to PyPI — see [Development install](#development-install) below, or use Docker.)*
+
+### Docker
+
+```bash
+docker build -t igra:0.1.0 .
+```
+
+Run it with `--network host` (to reach a PostgreSQL server on your machine) and a volume mount (so snapshots persist between runs):
+
+```bash
+docker run --rm --network host -v "$(pwd):/workspace" igra:0.1.0 init \
+  --host localhost --port 5432 --dbname myapp_dev --user myapp
+
+docker run --rm --network host -v "$(pwd):/workspace" \
+  -e IGRA_DB_PASSWORD=your-password \
+  igra:0.1.0 snapshot create clean-state
+```
+
+Since `.igra/` is written into the mounted `/workspace`, snapshots persist on your host filesystem across container runs.
 
 ---
 
