@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "igra"
-version = "0.1.0.dev0"
+version = "0.1.0"
 description = "Isolated Generation and Recovery Architecture - local-first PostgreSQL database state management for developers."
 readme = "README.md"
 requires-python = ">=3.12"
