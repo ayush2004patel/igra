@@ -135,7 +135,7 @@ Full spec-driven planning documentation is in [`docs/`](docs/):
 
 ## Status
 
-IGRA is in active development. Current scope is PostgreSQL only — see [`docs/PRD.md`](docs/PRD.md) for MVP boundaries and future direction.
+IGRA is in active development. Current scope is PostgreSQL only. The project is being developed locally with a focus on safe database state management and reproducible development workflows — see [`docs/PRD.md`](docs/PRD.md) for MVP boundaries and future direction.
 
 ## License
 
