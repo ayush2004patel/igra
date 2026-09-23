@@ -65,6 +65,9 @@ igra snapshot diff clean-state after-changes
 
 # Safely restore to the known-good state
 igra snapshot restore clean-state
+
+# List all available snapshots
+igra snapshot list
 ```
 
 ---
